@@ -1,0 +1,24 @@
+# ImageChoom: Anime poster preset
+
+set api_url = "http://127.0.0.1:7860/sdapi/v1/txt2img"
+set output_path = "outputs/anime-poster.png"
+
+set payload = {
+  "prompt": "dynamic anime key visual, hero pose, city neon lights, clean line art, vibrant color grading, masterpiece",
+  "negative_prompt": "photo, realistic skin texture, blurry, lowres, watermark, text",
+  "width": 832,
+  "height": 1216,
+  "steps": 30,
+  "cfg_scale": 8.5,
+  "sampler_name": "Euler a",
+  "seed": -1,
+  "override_settings": {
+    "sd_model_checkpoint": "anything-v5-PrtRE.safetensors"
+  }
+}
+
+adapter a1111_txt2img {
+  url: api_url,
+  body: payload,
+  output_file: output_path
+}

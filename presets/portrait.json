@@ -1,0 +1,14 @@
+{
+  "prompt": "photorealistic portrait, 85mm lens, soft rim lighting, shallow depth of field, skin detail, studio quality",
+  "negative_prompt": "cartoon, cgi, lowres, noisy, overexposed, watermark, text",
+  "width": 768,
+  "height": 1152,
+  "steps": 28,
+  "cfg_scale": 6.5,
+  "sampler_name": "DPM++ SDE Karras",
+  "seed": -1,
+  "restore_faces": true,
+  "override_settings": {
+    "sd_model_checkpoint": "realisticVisionV60B1_v51VAE.safetensors"
+  }
+}
