@@ -35,6 +35,7 @@ class RunWorker(QThread):
     """QThread wrapper for workflow execution."""
 
     finished_run = Signal(object)
+    log_line = Signal(str)
 
     def __init__(
         self,
@@ -49,7 +50,12 @@ class RunWorker(QThread):
         self.settings = settings
 
     def run(self) -> None:
-        result = run_workflow(self.normalized_text, self.run_name, self.settings)
+        result = run_workflow(
+            self.normalized_text,
+            self.run_name,
+            self.settings,
+            on_log=self.log_line.emit,
+        )
         self.finished_run.emit(result)
 
 
@@ -210,9 +216,13 @@ class MainWindow(QMainWindow):
 
         layout.addLayout(buttons_row, 2, 0, 1, 3)
 
+        self.outputs_root_label = QLabel(f"Outputs root: {self.settings.outputs_root}")
+        self.outputs_root_label.setWordWrap(True)
+        layout.addWidget(self.outputs_root_label, 3, 0, 1, 3)
+
         self.health_check_status = QLabel("")
         self.health_check_status.setWordWrap(True)
-        layout.addWidget(self.health_check_status, 3, 0, 1, 3)
+        layout.addWidget(self.health_check_status, 4, 0, 1, 3)
 
         return box
 
@@ -321,8 +331,12 @@ class MainWindow(QMainWindow):
             run_name=workflow.name,
             settings=self.settings,
         )
+        self._run_worker.log_line.connect(self._append_run_log_line)
         self._run_worker.finished_run.connect(self._on_run_finished)
         self._run_worker.start()
+
+    def _append_run_log_line(self, line: str) -> None:
+        self.run_logs_text.appendPlainText(line)
 
     def _on_run_finished(self, result: RunResult) -> None:
         self.run_button.setEnabled(True)
