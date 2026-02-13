@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "imagechoom"
+version = "0.1.0"
+description = "ImageChoom GUI application"
+requires-python = ">=3.10"
+dependencies = [
+  "PySide6",
+  "choomlang",
+]
+
+[project.scripts]
+imagechoom = "imagechoom_gui.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "apps/gui"}
+
+[tool.setuptools.packages.find]
+where = ["apps/gui"]
+include = ["imagechoom_gui*"]
