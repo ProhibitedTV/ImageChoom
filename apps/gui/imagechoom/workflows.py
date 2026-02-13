@@ -123,6 +123,36 @@ def render_v1_toolcall_lines(calls: list[A1111Txt2ImgCall]) -> str:
     return "\n".join(lines)
 
 
+def replace_first_a1111_toolcall_line(text: str, call: A1111Txt2ImgCall) -> str:
+    """Replace the first a1111 txt2img toolcall line and preserve other DSL lines."""
+    replacement = render_v1_toolcall_lines([call])
+    lines = text.splitlines()
+    for idx, line in enumerate(lines):
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        try:
+            parts = shlex.split(stripped)
+        except ValueError:
+            continue
+        if len(parts) < 3 or parts[0] != "toolcall" or parts[1] != "tool":
+            continue
+
+        attrs: dict[str, str] = {}
+        for token in parts[2:]:
+            if "=" not in token:
+                continue
+            key, value = token.split("=", maxsplit=1)
+            attrs[key] = value
+        if attrs.get("name") != "a1111_txt2img":
+            continue
+
+        lines[idx] = replacement
+        return "\n".join(lines)
+
+    return f"{text.rstrip()}\n{replacement}" if text.strip() else replacement
+
+
 def legacy_to_v1_toolcalls(text: str, *, base_dir: Path | None = None) -> str:
     """Convert currently-used legacy workflow patterns into one v1 toolcall line."""
     payload = _extract_payload_dict(text, base_dir=base_dir)

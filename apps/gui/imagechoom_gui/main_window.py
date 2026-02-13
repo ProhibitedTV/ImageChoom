@@ -46,6 +46,7 @@ from imagechoom.workflows import (
     parse_v1_toolcall_lines,
     read_workflow_text,
     render_v1_toolcall_lines,
+    replace_first_a1111_toolcall_line,
 )
 
 
@@ -645,13 +646,13 @@ class MainWindow(QMainWindow):
             n=int(self.workflow_n_input.value()),
             base_url=self.workflow_base_url_input.text().strip(),
         )
-        existing = self._workflow_editor_calls[1:] if self._workflow_editor_calls else []
-        text = render_v1_toolcall_lines([call, *existing])
+        existing_text = self.workflow_raw_text.toPlainText()
+        text = replace_first_a1111_toolcall_line(existing_text, call)
 
         self._suspend_sync = True
         self.workflow_raw_text.setPlainText(text)
         self._suspend_sync = False
-        self._workflow_editor_calls = [call, *existing]
+        self._workflow_editor_calls = parse_v1_toolcall_lines(text)
 
     def _validate_workflow_lines(self) -> None:
         lines = self.workflow_raw_text.toPlainText().splitlines()
