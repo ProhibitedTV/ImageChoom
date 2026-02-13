@@ -36,6 +36,27 @@ choom run workflows/cinematic_wallpaper.choom --timeout 180
 
 Generated files are written to `outputs/`.
 
+
+## GUI Quickstart
+
+From the repository root, install and launch the GUI:
+
+```bash
+python -m pip install -e .
+imagechoom
+```
+
+Windows-friendly alternatives:
+
+```powershell
+py -m pip install -e .
+py -m imagechoom_gui.cli
+```
+
+Use `py -m imagechoom_gui.cli` as a fallback if the `imagechoom` PATH script is not found.
+
+The GUI expects this repository layout, with both `workflows/` and `presets/` present.
+
 ## Canonical runnable scripts
 
 Use scripts in `workflows/` as the canonical location for all runnable Choom scripts.
