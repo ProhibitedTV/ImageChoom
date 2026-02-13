@@ -5,6 +5,7 @@ from __future__ import annotations
 import ast
 import json
 import re
+import shlex
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -27,6 +28,22 @@ class NormalizedWorkflow:
     warnings: list[str]
 
 
+@dataclass(slots=True)
+class A1111Txt2ImgCall:
+    """Editable subset of a1111_txt2img toolcall fields."""
+
+    prompt: str = ""
+    negative: str = ""
+    width: int = 1024
+    height: int = 1024
+    steps: int = 30
+    cfg: float = 7.0
+    sampler: str = "Euler a"
+    seed: int = -1
+    n: int = 1
+    base_url: str = ""
+
+
 def discover_workflows(repo_root: Path) -> list[WorkflowMetadata]:
     """Return discovered workflow files under `<repo_root>/workflows`."""
     workflow_root = repo_root / "workflows"
@@ -46,6 +63,64 @@ def discover_workflows(repo_root: Path) -> list[WorkflowMetadata]:
 def read_workflow_text(path: Path) -> str:
     """Read workflow source text as UTF-8."""
     return path.read_text(encoding="utf-8")
+
+
+def parse_v1_toolcall_lines(text: str) -> list[A1111Txt2ImgCall]:
+    """Parse editable a1111_txt2img calls from a v1 workflow."""
+    calls: list[A1111Txt2ImgCall] = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        try:
+            parts = shlex.split(stripped)
+        except ValueError:
+            continue
+        if len(parts) < 3 or parts[0] != "toolcall" or parts[1] != "tool":
+            continue
+
+        attrs: dict[str, str] = {}
+        for token in parts[2:]:
+            if "=" not in token:
+                continue
+            key, value = token.split("=", maxsplit=1)
+            attrs[key] = value
+
+        if attrs.get("name") != "a1111_txt2img":
+            continue
+
+        calls.append(
+            A1111Txt2ImgCall(
+                prompt=attrs.get("prompt", ""),
+                negative=attrs.get("negative", ""),
+                width=_as_int(attrs.get("width"), 1024),
+                height=_as_int(attrs.get("height"), 1024),
+                steps=_as_int(attrs.get("steps"), 30),
+                cfg=_as_float(attrs.get("cfg"), 7.0),
+                sampler=attrs.get("sampler", "Euler a"),
+                seed=_as_int(attrs.get("seed"), -1),
+                n=_as_int(attrs.get("n"), 1),
+                base_url=attrs.get("base_url", ""),
+            )
+        )
+    return calls
+
+
+def render_v1_toolcall_lines(calls: list[A1111Txt2ImgCall]) -> str:
+    """Render editable calls back to v1 `toolcall tool` lines."""
+    lines: list[str] = []
+    for call in calls:
+        line = (
+            "toolcall tool name=a1111_txt2img id=images "
+            f'prompt={_quoted(call.prompt)} negative={_quoted(call.negative)} '
+            f"width={int(call.width)} height={int(call.height)} steps={int(call.steps)} "
+            f"cfg={float(call.cfg)} sampler={_quoted(call.sampler)} "
+            f"seed={int(call.seed)} n={int(call.n)}"
+        )
+        if call.base_url:
+            line = f"{line} base_url={_quoted(call.base_url)}"
+        lines.append(line)
+    return "\n".join(lines)
 
 
 def legacy_to_v1_toolcalls(text: str, *, base_dir: Path | None = None) -> str:
@@ -216,3 +291,17 @@ def _unquote(value: str) -> str:
     if len(value) >= 2 and value[0] == '"' and value[-1] == '"':
         return value[1:-1]
     return value
+
+
+def _as_int(value: str | None, default: int) -> int:
+    try:
+        return int(str(value)) if value is not None else default
+    except (TypeError, ValueError):
+        return default
+
+
+def _as_float(value: str | None, default: float) -> float:
+    try:
+        return float(str(value)) if value is not None else default
+    except (TypeError, ValueError):
+        return default

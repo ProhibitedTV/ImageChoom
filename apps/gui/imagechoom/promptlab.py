@@ -150,6 +150,17 @@ class PromptLabWidget(QWidget):
         root.addWidget(QLabel("SD params"))
         root.addWidget(self.params_output)
 
+    def latest_workflow_text(self) -> str | None:
+        if self._last_generated is None:
+            return None
+        spec = PromptSpec(
+            positive=self.positive_output.toPlainText().strip() or self._last_generated.spec.positive,
+            negative=self.negative_output.toPlainText().strip() or self._last_generated.spec.negative,
+            style_tags=list(self._last_generated.spec.style_tags),
+            sd_params=dict(self._last_generated.spec.sd_params),
+        )
+        return promptspec_to_v1_toolcall(spec)
+
     def _sync_creativity_label(self, value: int) -> None:
         self.creativity_label.setText(f"{value/100:.2f}")
 
