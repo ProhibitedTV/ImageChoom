@@ -11,6 +11,7 @@ from typing import Any, Callable
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
+    QCheckBox,
     QFormLayout,
     QHBoxLayout,
     QLabel,
@@ -24,6 +25,8 @@ from PySide6.QtWidgets import (
     QWidget,
     QComboBox,
 )
+
+from .run_queue import PromptLabConfig
 
 
 @dataclass(slots=True)
@@ -48,10 +51,16 @@ class PromptLabWidget(QWidget):
         *,
         imagechoom_root: Path,
         on_enqueue_workflow: Callable[[str, str], None],
+        on_enqueue_generate_jobs: Callable[[str, PromptLabConfig, int], None],
+        on_start_continuous: Callable[[], None],
+        on_stop_continuous: Callable[[], None],
     ) -> None:
         super().__init__()
         self.imagechoom_root = imagechoom_root
         self.on_enqueue_workflow = on_enqueue_workflow
+        self.on_enqueue_generate_jobs = on_enqueue_generate_jobs
+        self.on_start_continuous = on_start_continuous
+        self.on_stop_continuous = on_stop_continuous
         self._last_generated: PromptLabResult | None = None
 
         root = QVBoxLayout(self)
@@ -90,6 +99,17 @@ class PromptLabWidget(QWidget):
 
         root.addLayout(form)
 
+        continuous_row = QHBoxLayout()
+        self.continuous_toggle = QCheckBox("Continuous")
+        continuous_row.addWidget(self.continuous_toggle)
+        self.target_count_spin = QSpinBox()
+        self.target_count_spin.setRange(1, 1000)
+        self.target_count_spin.setValue(50)
+        continuous_row.addWidget(QLabel("Target count"))
+        continuous_row.addWidget(self.target_count_spin)
+        continuous_row.addStretch(1)
+        root.addLayout(continuous_row)
+
         actions = QHBoxLayout()
         self.generate_button = QPushButton("Generate")
         self.generate_button.clicked.connect(self._generate)
@@ -99,6 +119,14 @@ class PromptLabWidget(QWidget):
         self.enqueue_button.setEnabled(False)
         self.enqueue_button.clicked.connect(self._enqueue)
         actions.addWidget(self.enqueue_button)
+
+        self.start_button = QPushButton("Start")
+        self.start_button.clicked.connect(self._start_continuous)
+        actions.addWidget(self.start_button)
+
+        self.stop_button = QPushButton("Stop")
+        self.stop_button.clicked.connect(self._stop_continuous)
+        actions.addWidget(self.stop_button)
         actions.addStretch(1)
         root.addLayout(actions)
 
@@ -174,6 +202,34 @@ class PromptLabWidget(QWidget):
         run_name = f"promptlab-{self.theme_input.text().strip() or 'untitled'}"
         self.on_enqueue_workflow(run_name, workflow_text)
         QMessageBox.information(self, "Prompt Lab", "Queued prompt for run execution.")
+
+    def _start_continuous(self) -> None:
+        theme = self.theme_input.text().strip()
+        if not theme:
+            QMessageBox.warning(self, "Prompt Lab", "Enter a theme first.")
+            return
+        config = self._build_promptlab_config(theme=theme)
+        count = int(self.target_count_spin.value()) if self.continuous_toggle.isChecked() else 1
+        self.on_enqueue_generate_jobs(f"promptlab-{theme}", config, count)
+        self.on_start_continuous()
+        QMessageBox.information(self, "Prompt Lab", f"Queued {count} prompt job(s).")
+
+    def _stop_continuous(self) -> None:
+        self.on_stop_continuous()
+
+    def _build_promptlab_config(self, *, theme: str) -> PromptLabConfig:
+        model = self.model_input.text().strip()
+        if not model:
+            raise ValueError("Ollama model is required")
+        preset_name = self.preset_combo.currentText()
+        return PromptLabConfig(
+            model=model,
+            preset_name=preset_name,
+            preset=self._preset_map.get(preset_name, {}),
+            theme=theme,
+            creativity=self.creativity_slider.value() / 100,
+            timeout_s=int(self.timeout_spin.value()),
+        )
 
 
 def generate_prompt_spec(
