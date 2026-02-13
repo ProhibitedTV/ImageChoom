@@ -34,7 +34,7 @@ The wallpaper scripts live under `apps/wallpaper/` and expect to be run from the
 
 - `apps/wallpaper/scripts/pack_fast.choom`
 - `apps/wallpaper/scripts/pack_hd.choom`
-- shared input config: `apps/wallpaper/inputs/themes.json`
+- shared input config: `apps/wallpaper/inputs/themes.json` (loaded by both scripts via `read_json`)
 
 Validate scripts:
 
