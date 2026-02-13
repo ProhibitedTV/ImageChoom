@@ -20,4 +20,4 @@ package-dir = {"" = "apps/gui"}
 
 [tool.setuptools.packages.find]
 where = ["apps/gui"]
-include = ["imagechoom_gui*"]
+include = ["imagechoom_gui*", "imagechoom*"]
