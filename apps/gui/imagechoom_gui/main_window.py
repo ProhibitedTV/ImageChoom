@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QLabel,
@@ -19,8 +21,10 @@ class MainWindow(QMainWindow):
 
     SECTION_NAMES = ("Workflows", "Presets", "Prompt Lab", "Runs")
 
-    def __init__(self) -> None:
+    def __init__(self, *, imagechoom_root: Path) -> None:
         super().__init__()
+        self.imagechoom_root = imagechoom_root
+
         self.setObjectName("mainWindow")
         self.setWindowTitle("ImageChoom")
         self.resize(980, 640)
@@ -61,6 +65,12 @@ class MainWindow(QMainWindow):
         label = QLabel(f"{section_name} page")
         label.setObjectName(f"{section_name.lower().replace(' ', '_')}PlaceholderLabel")
         layout.addWidget(label)
+        root_hint_label = QLabel(f"Repo root: {self.imagechoom_root}")
+        root_hint_label.setObjectName(
+            f"{section_name.lower().replace(' ', '_')}RootPathLabel"
+        )
+        root_hint_label.setWordWrap(True)
+        layout.addWidget(root_hint_label)
         layout.addStretch(1)
 
         return page
