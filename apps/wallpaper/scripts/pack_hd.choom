@@ -1,0 +1,26 @@
+# Wallpaper pack (HD)
+# Run from repository root so this input path resolves correctly.
+set input_config = "apps/wallpaper/inputs/themes.json"
+
+set api_url = "http://127.0.0.1:7860/sdapi/v1/txt2img"
+set output_path = "outputs/wallpaper-pack-hd.png"
+
+set payload = {
+  "prompt": "ultra detailed cinematic wallpaper, volumetric lighting, atmospheric depth",
+  "negative_prompt": "blurry, lowres, watermark, text, logo",
+  "width": 1920,
+  "height": 1080,
+  "steps": 32,
+  "cfg_scale": 7.0,
+  "sampler_name": "DPM++ 2M Karras",
+  "seed": -1,
+  "override_settings": {
+    "sd_model_checkpoint": "juggernautXL_v9Rundiffusionphoto2.safetensors"
+  }
+}
+
+adapter a1111_txt2img {
+  url: api_url,
+  body: payload,
+  output_file: output_path
+}

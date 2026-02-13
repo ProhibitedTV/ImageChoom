@@ -28,6 +28,28 @@ choom run workflows/cinematic_wallpaper.choom --timeout 180
 
 Generated files are written to `outputs/`.
 
+## Wallpaper app scripts
+
+The wallpaper scripts live under `apps/wallpaper/` and expect to be run from the **repository root** (`ImageChoom/`) so input paths resolve correctly.
+
+- `apps/wallpaper/scripts/pack_fast.choom`
+- `apps/wallpaper/scripts/pack_hd.choom`
+- shared input config: `apps/wallpaper/inputs/themes.json`
+
+Validate scripts:
+
+```bash
+choom validate apps/wallpaper/scripts/pack_fast.choom
+choom validate apps/wallpaper/scripts/pack_hd.choom
+```
+
+Run scripts:
+
+```bash
+choom run apps/wallpaper/scripts/pack_fast.choom --timeout 180
+choom run apps/wallpaper/scripts/pack_hd.choom --timeout 180
+```
+
 ## Included workflows
 
 - `workflows/cinematic_wallpaper.choom` — moody cinematic wallpapers
@@ -54,6 +76,13 @@ ImageChoom/
 │  ├─ cinematic_wallpaper.choom
 │  ├─ anime_poster.choom
 │  └─ photo_real_portrait.choom
+├─ apps/
+│  └─ wallpaper/
+│     ├─ inputs/
+│     │  └─ themes.json
+│     └─ scripts/
+│        ├─ pack_fast.choom
+│        └─ pack_hd.choom
 ├─ presets/
 │  ├─ cinematic.json
 │  ├─ anime.json

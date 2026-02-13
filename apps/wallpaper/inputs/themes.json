@@ -1,0 +1,28 @@
+{
+  "fast": {
+    "prompt": "cinematic wallpaper, dramatic sky, rich contrast, clean composition",
+    "negative_prompt": "blurry, lowres, watermark, text, logo",
+    "width": 1280,
+    "height": 720,
+    "steps": 20,
+    "cfg_scale": 6.5,
+    "sampler_name": "Euler a",
+    "seed": -1,
+    "override_settings": {
+      "sd_model_checkpoint": "juggernautXL_v9Rundiffusionphoto2.safetensors"
+    }
+  },
+  "hd": {
+    "prompt": "ultra detailed cinematic wallpaper, volumetric lighting, atmospheric depth",
+    "negative_prompt": "blurry, lowres, watermark, text, logo",
+    "width": 1920,
+    "height": 1080,
+    "steps": 32,
+    "cfg_scale": 7.0,
+    "sampler_name": "DPM++ 2M Karras",
+    "seed": -1,
+    "override_settings": {
+      "sd_model_checkpoint": "juggernautXL_v9Rundiffusionphoto2.safetensors"
+    }
+  }
+}
