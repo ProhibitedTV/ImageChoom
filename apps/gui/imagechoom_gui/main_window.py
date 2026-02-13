@@ -11,6 +11,9 @@ from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtGui import QDesktopServices, QGuiApplication, QPixmap
 from PySide6.QtWidgets import (
     QCheckBox,
+    QDoubleSpinBox,
+    QFileDialog,
+    QFormLayout,
     QGridLayout,
     QGroupBox,
     QHBoxLayout,
@@ -35,7 +38,15 @@ from imagechoom.executor import RunResult, run_workflow
 from imagechoom.promptlab import PromptLabWidget, generate_prompt_spec, promptspec_to_v1_toolcall
 from imagechoom.run_queue import PromptLabConfig, QueueJob, QueueStore, RunRecord
 from imagechoom.settings import AppSettings, check_a1111_health, load_settings, save_settings
-from imagechoom.workflows import discover_workflows, normalize_workflow_for_run, read_workflow_text
+from choomlang.dsl import parse_dsl
+from imagechoom.workflows import (
+    A1111Txt2ImgCall,
+    discover_workflows,
+    normalize_workflow_for_run,
+    parse_v1_toolcall_lines,
+    read_workflow_text,
+    render_v1_toolcall_lines,
+)
 
 
 class RunWorker(QThread):
@@ -198,6 +209,9 @@ class MainWindow(QMainWindow):
         self._selected_run: RunRecord | None = None
 
         self._workflow_items = discover_workflows(self.imagechoom_root)
+        self._workflow_editor_calls: list[A1111Txt2ImgCall] = []
+        self._suspend_sync = False
+        self._current_workflow_path: Path | None = None
         self.queue_store = QueueStore()
         self._run_records = self.queue_store.list_runs()
 
@@ -276,19 +290,33 @@ class MainWindow(QMainWindow):
         detail_layout.addWidget(self.workflow_warnings_label)
 
         detail_layout.addWidget(self._build_settings_panel())
+        detail_layout.addWidget(self._build_workflow_editor_actions())
         detail_layout.addWidget(self._build_run_panel())
 
-        detail_layout.addWidget(QLabel("Source (.choom)"))
-        self.workflow_source_text = QPlainTextEdit()
-        self.workflow_source_text.setReadOnly(True)
-        detail_layout.addWidget(self.workflow_source_text, 1)
+        editor_splitter = QSplitter(Qt.Orientation.Horizontal)
+        editor_splitter.setObjectName("workflowEditorSplitter")
 
-        self.workflow_preview_title = QLabel("Normalized v1 preview")
-        detail_layout.addWidget(self.workflow_preview_title)
+        self.workflow_form_editor = self._build_workflow_form_editor()
+        editor_splitter.addWidget(self.workflow_form_editor)
 
-        self.workflow_normalized_text = QPlainTextEdit()
-        self.workflow_normalized_text.setReadOnly(True)
-        detail_layout.addWidget(self.workflow_normalized_text, 1)
+        raw_panel = QWidget()
+        raw_layout = QVBoxLayout(raw_panel)
+        raw_layout.setContentsMargins(0, 0, 0, 0)
+        raw_layout.addWidget(QLabel("Raw v1 DSL (.choom)"))
+        self.workflow_raw_text = QPlainTextEdit()
+        self.workflow_raw_text.textChanged.connect(self._sync_from_raw_editor)
+        raw_layout.addWidget(self.workflow_raw_text, 1)
+        editor_splitter.addWidget(raw_panel)
+        editor_splitter.setStretchFactor(0, 0)
+        editor_splitter.setStretchFactor(1, 1)
+
+        detail_layout.addWidget(editor_splitter, 1)
+
+        detail_layout.addWidget(QLabel("Validation"))
+        self.workflow_validation_text = QPlainTextEdit()
+        self.workflow_validation_text.setReadOnly(True)
+        self.workflow_validation_text.setMaximumBlockCount(500)
+        detail_layout.addWidget(self.workflow_validation_text)
 
         detail_layout.addWidget(QLabel("Run logs"))
         self.run_logs_text = QPlainTextEdit()
@@ -319,6 +347,95 @@ class MainWindow(QMainWindow):
             self.workflow_list.setCurrentRow(0)
 
         return page
+
+    def _build_workflow_editor_actions(self) -> QWidget:
+        panel = QWidget()
+        layout = QHBoxLayout(panel)
+        layout.setContentsMargins(0, 0, 0, 0)
+
+        self.new_workflow_button = QPushButton("New v1 Workflow")
+        self.new_workflow_button.clicked.connect(self._new_v1_workflow)
+        layout.addWidget(self.new_workflow_button)
+
+        self.create_from_promptlab_button = QPushButton("Create from Prompt Lab output")
+        self.create_from_promptlab_button.clicked.connect(self._create_from_promptlab_output)
+        layout.addWidget(self.create_from_promptlab_button)
+
+        self.validate_workflow_button = QPushButton("Validate")
+        self.validate_workflow_button.clicked.connect(self._validate_workflow_lines)
+        layout.addWidget(self.validate_workflow_button)
+
+        self.save_workflow_button = QPushButton("Save")
+        self.save_workflow_button.clicked.connect(self._save_workflow)
+        layout.addWidget(self.save_workflow_button)
+
+        self.save_workflow_as_button = QPushButton("Save As")
+        self.save_workflow_as_button.clicked.connect(self._save_workflow_as)
+        layout.addWidget(self.save_workflow_as_button)
+
+        layout.addStretch(1)
+        return panel
+
+    def _build_workflow_form_editor(self) -> QWidget:
+        panel = QWidget()
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(QLabel("Structured fields (first a1111_txt2img call)"))
+
+        form = QFormLayout()
+        self.workflow_prompt_input = QPlainTextEdit()
+        self.workflow_prompt_input.setMaximumHeight(100)
+        self.workflow_prompt_input.textChanged.connect(self._sync_from_form_editor)
+        form.addRow("Prompt", self.workflow_prompt_input)
+
+        self.workflow_negative_input = QPlainTextEdit()
+        self.workflow_negative_input.setMaximumHeight(80)
+        self.workflow_negative_input.textChanged.connect(self._sync_from_form_editor)
+        form.addRow("Negative", self.workflow_negative_input)
+
+        self.workflow_width_input = QSpinBox()
+        self.workflow_width_input.setRange(64, 4096)
+        self.workflow_width_input.valueChanged.connect(self._sync_from_form_editor)
+        form.addRow("Width", self.workflow_width_input)
+
+        self.workflow_height_input = QSpinBox()
+        self.workflow_height_input.setRange(64, 4096)
+        self.workflow_height_input.valueChanged.connect(self._sync_from_form_editor)
+        form.addRow("Height", self.workflow_height_input)
+
+        self.workflow_steps_input = QSpinBox()
+        self.workflow_steps_input.setRange(1, 300)
+        self.workflow_steps_input.valueChanged.connect(self._sync_from_form_editor)
+        form.addRow("Steps", self.workflow_steps_input)
+
+        self.workflow_cfg_input = QDoubleSpinBox()
+        self.workflow_cfg_input.setRange(0.0, 50.0)
+        self.workflow_cfg_input.setDecimals(2)
+        self.workflow_cfg_input.setSingleStep(0.1)
+        self.workflow_cfg_input.valueChanged.connect(self._sync_from_form_editor)
+        form.addRow("CFG", self.workflow_cfg_input)
+
+        self.workflow_sampler_input = QLineEdit()
+        self.workflow_sampler_input.textChanged.connect(self._sync_from_form_editor)
+        form.addRow("Sampler", self.workflow_sampler_input)
+
+        self.workflow_seed_input = QSpinBox()
+        self.workflow_seed_input.setRange(-1_000_000_000, 1_000_000_000)
+        self.workflow_seed_input.valueChanged.connect(self._sync_from_form_editor)
+        form.addRow("Seed", self.workflow_seed_input)
+
+        self.workflow_n_input = QSpinBox()
+        self.workflow_n_input.setRange(1, 100)
+        self.workflow_n_input.valueChanged.connect(self._sync_from_form_editor)
+        form.addRow("N", self.workflow_n_input)
+
+        self.workflow_base_url_input = QLineEdit()
+        self.workflow_base_url_input.textChanged.connect(self._sync_from_form_editor)
+        form.addRow("base_url", self.workflow_base_url_input)
+
+        layout.addLayout(form)
+        layout.addStretch(1)
+        return panel
 
     def _build_settings_panel(self) -> QWidget:
         box = QGroupBox("A1111 Settings")
@@ -385,13 +502,14 @@ class MainWindow(QMainWindow):
         return page
 
     def _build_prompt_lab_page(self) -> QWidget:
-        return PromptLabWidget(
+        self.prompt_lab_widget = PromptLabWidget(
             imagechoom_root=self.imagechoom_root,
             on_enqueue_workflow=self._enqueue_promptlab_workflow,
             on_enqueue_generate_jobs=self._enqueue_generate_jobs,
             on_start_continuous=self._start_continuous,
             on_stop_continuous=self._stop_continuous,
         )
+        return self.prompt_lab_widget
 
     def _build_runs_page(self) -> QWidget:
         page = QWidget()
@@ -455,18 +573,21 @@ class MainWindow(QMainWindow):
     def _handle_workflow_selection_change(self, index: int) -> None:
         if not (0 <= index < len(self._workflow_items)):
             self.workflow_path_label.setText("Select a workflow")
-            self.workflow_source_text.clear()
-            self.workflow_normalized_text.clear()
+            self._suspend_sync = True
+            self.workflow_raw_text.clear()
+            self.workflow_validation_text.clear()
+            self._suspend_sync = False
             self.workflow_warnings_label.hide()
+            self._current_workflow_path = None
             return
 
         workflow = self._workflow_items[index]
+        self._current_workflow_path = workflow.path
         self.workflow_path_label.setText(f"{workflow.path.relative_to(self.imagechoom_root)}")
-        self.workflow_source_text.setPlainText(read_workflow_text(workflow.path))
 
         if workflow.type == "legacy":
             normalized = normalize_workflow_for_run(workflow.path)
-            self.workflow_normalized_text.setPlainText(normalized.normalized_text)
+            source_text = normalized.normalized_text
             if normalized.warnings:
                 warning_text = "Warnings:\n- " + "\n- ".join(normalized.warnings)
                 self.workflow_warnings_label.setText(warning_text)
@@ -474,8 +595,137 @@ class MainWindow(QMainWindow):
             else:
                 self.workflow_warnings_label.hide()
         else:
-            self.workflow_normalized_text.setPlainText(read_workflow_text(workflow.path))
+            source_text = read_workflow_text(workflow.path)
             self.workflow_warnings_label.hide()
+
+        self._set_editor_text(source_text)
+
+    def _set_editor_text(self, text: str) -> None:
+        self._suspend_sync = True
+        self.workflow_raw_text.setPlainText(text)
+        self.workflow_validation_text.clear()
+        self._suspend_sync = False
+        self._sync_form_with_raw(text)
+
+    def _sync_form_with_raw(self, text: str) -> None:
+        calls = parse_v1_toolcall_lines(text)
+        self._workflow_editor_calls = calls
+        call = calls[0] if calls else A1111Txt2ImgCall()
+
+        self._suspend_sync = True
+        self.workflow_prompt_input.setPlainText(call.prompt)
+        self.workflow_negative_input.setPlainText(call.negative)
+        self.workflow_width_input.setValue(call.width)
+        self.workflow_height_input.setValue(call.height)
+        self.workflow_steps_input.setValue(call.steps)
+        self.workflow_cfg_input.setValue(call.cfg)
+        self.workflow_sampler_input.setText(call.sampler)
+        self.workflow_seed_input.setValue(call.seed)
+        self.workflow_n_input.setValue(call.n)
+        self.workflow_base_url_input.setText(call.base_url)
+        self._suspend_sync = False
+
+    def _sync_from_raw_editor(self) -> None:
+        if self._suspend_sync:
+            return
+        self._sync_form_with_raw(self.workflow_raw_text.toPlainText())
+
+    def _sync_from_form_editor(self) -> None:
+        if self._suspend_sync:
+            return
+        call = A1111Txt2ImgCall(
+            prompt=self.workflow_prompt_input.toPlainText(),
+            negative=self.workflow_negative_input.toPlainText(),
+            width=int(self.workflow_width_input.value()),
+            height=int(self.workflow_height_input.value()),
+            steps=int(self.workflow_steps_input.value()),
+            cfg=float(self.workflow_cfg_input.value()),
+            sampler=self.workflow_sampler_input.text().strip() or "Euler a",
+            seed=int(self.workflow_seed_input.value()),
+            n=int(self.workflow_n_input.value()),
+            base_url=self.workflow_base_url_input.text().strip(),
+        )
+        existing = self._workflow_editor_calls[1:] if self._workflow_editor_calls else []
+        text = render_v1_toolcall_lines([call, *existing])
+
+        self._suspend_sync = True
+        self.workflow_raw_text.setPlainText(text)
+        self._suspend_sync = False
+        self._workflow_editor_calls = [call, *existing]
+
+    def _validate_workflow_lines(self) -> None:
+        lines = self.workflow_raw_text.toPlainText().splitlines()
+        if not lines:
+            self.workflow_validation_text.setPlainText("No lines to validate.")
+            return
+
+        results: list[str] = []
+        for idx, line in enumerate(lines, start=1):
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            try:
+                parse_dsl(stripped)
+                results.append(f"line {idx}: ok")
+            except Exception as exc:  # noqa: BLE001
+                results.append(f"line {idx}: error: {exc}")
+
+        self.workflow_validation_text.setPlainText("\n".join(results) if results else "No executable lines.")
+
+    def _new_v1_workflow(self) -> None:
+        self._current_workflow_path = None
+        self.workflow_path_label.setText("New workflow (unsaved)")
+        self._set_editor_text(render_v1_toolcall_lines([A1111Txt2ImgCall()]))
+
+    def _create_from_promptlab_output(self) -> None:
+        text = self.prompt_lab_widget.latest_workflow_text()
+        if not text:
+            QMessageBox.information(self, "Workflows", "No Prompt Lab output found yet. Generate a prompt first.")
+            return
+        self._current_workflow_path = None
+        self.workflow_path_label.setText("From Prompt Lab (unsaved)")
+        self._set_editor_text(text)
+
+    def _save_workflow(self) -> None:
+        if self._current_workflow_path is None:
+            self._save_workflow_as()
+            return
+        self._current_workflow_path.write_text(self.workflow_raw_text.toPlainText().rstrip() + "\n", encoding="utf-8")
+        self._reload_workflow_list(selected_path=self._current_workflow_path)
+
+    def _save_workflow_as(self) -> None:
+        workflows_dir = self.imagechoom_root / "workflows"
+        workflows_dir.mkdir(parents=True, exist_ok=True)
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save workflow",
+            str(workflows_dir / "new_workflow.choom"),
+            "Choom Workflows (*.choom)",
+        )
+        if not file_path:
+            return
+
+        target = Path(file_path)
+        if target.suffix != ".choom":
+            target = target.with_suffix(".choom")
+        if workflows_dir not in target.resolve().parents and target.resolve() != workflows_dir.resolve():
+            QMessageBox.warning(self, "Save workflow", "Please save workflows inside the workflows/ folder.")
+            return
+
+        target.write_text(self.workflow_raw_text.toPlainText().rstrip() + "\n", encoding="utf-8")
+        self._current_workflow_path = target
+        self._reload_workflow_list(selected_path=target)
+
+    def _reload_workflow_list(self, *, selected_path: Path | None = None) -> None:
+        self._workflow_items = discover_workflows(self.imagechoom_root)
+        self.workflow_list.clear()
+        selected_index = -1
+        for idx, workflow in enumerate(self._workflow_items):
+            self.workflow_list.addItem(f"{workflow.name} ({workflow.type})")
+            if selected_path is not None and workflow.path == selected_path:
+                selected_index = idx
+        if selected_index >= 0:
+            self.workflow_list.setCurrentRow(selected_index)
 
     def _save_settings_from_ui(self) -> None:
         self.settings = AppSettings(
