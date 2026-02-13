@@ -2,19 +2,12 @@
 
 from __future__ import annotations
 
-import sys
-
-from PySide6.QtWidgets import QApplication, QLabel
+from .app import run_app
 
 
 def main() -> int:
-    """Create and run the Qt application."""
-    app = QApplication(sys.argv)
-    label = QLabel("ImageChoom GUI is running")
-    label.setWindowTitle("ImageChoom")
-    label.resize(320, 80)
-    label.show()
-    return app.exec()
+    """Run the GUI process."""
+    return run_app()
 
 
 if __name__ == "__main__":
