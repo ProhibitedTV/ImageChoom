@@ -1,8 +1,10 @@
 # ImageChoom
 
-Curated **ChoomLang** workflows for image generation using the **Automatic1111 (A1111) Stable Diffusion WebUI API**.
+ImageChoom is evolving into a **GUI program for working with and administering workflows for Automatic1111 (A1111)** using the **ChoomLang DSL**.
 
-ImageChoom is a workflow repository, not a Python package. It provides ready-to-run `.choom` scripts that call the `a1111_txt2img` adapter and save generated images locally.
+Today, this repository provides the workflow foundation for that direction: curated, ready-to-run `.choom` scripts that call the `a1111_txt2img` adapter and save generated images locally.
+
+See `docs/PRODUCT_VISION.md` for the detailed product direction and roadmap.
 
 ## Requirements
 
@@ -114,7 +116,8 @@ ImageChoom/
 │  ├─ anime.json
 │  └─ portrait.json
 ├─ docs/
-│  └─ A1111_SETUP.md
+│  ├─ A1111_SETUP.md
+│  └─ PRODUCT_VISION.md
 ├─ scripts/
 │  ├─ check_layout.sh
 │  └─ run_all.sh
