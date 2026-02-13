@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from dataclasses import dataclass
 
 from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtGui import QPixmap
@@ -27,6 +28,7 @@ from PySide6.QtWidgets import (
 )
 
 from imagechoom.executor import RunResult, run_workflow
+from imagechoom.promptlab import PromptLabWidget
 from imagechoom.settings import AppSettings, check_a1111_health, load_settings, save_settings
 from imagechoom.workflows import discover_workflows, normalize_workflow_for_run, read_workflow_text
 
@@ -59,6 +61,12 @@ class RunWorker(QThread):
         self.finished_run.emit(result)
 
 
+@dataclass(slots=True)
+class QueuedRun:
+    run_name: str
+    normalized_text: str
+
+
 class MainWindow(QMainWindow):
     """Primary application window with sidebar navigation and stacked pages."""
 
@@ -69,6 +77,7 @@ class MainWindow(QMainWindow):
         self.imagechoom_root = imagechoom_root
         self.settings = load_settings(self.imagechoom_root)
         self._run_worker: RunWorker | None = None
+        self._run_queue: list[QueuedRun] = []
 
         self._workflow_items = discover_workflows(self.imagechoom_root)
 
@@ -83,8 +92,9 @@ class MainWindow(QMainWindow):
         self.page_stack = QStackedWidget()
         self.page_stack.setObjectName("mainPageStack")
         self.page_stack.addWidget(self._build_workflows_page())
-        for section_name in self.SECTION_NAMES[1:]:
-            self.page_stack.addWidget(self._build_placeholder_page(section_name))
+        self.page_stack.addWidget(self._build_placeholder_page("Presets"))
+        self.page_stack.addWidget(self._build_prompt_lab_page())
+        self.page_stack.addWidget(self._build_runs_page())
 
         layout_splitter = QSplitter(Qt.Orientation.Horizontal)
         layout_splitter.setObjectName("mainLayoutSplitter")
@@ -260,6 +270,38 @@ class MainWindow(QMainWindow):
 
         return page
 
+    def _build_prompt_lab_page(self) -> QWidget:
+        return PromptLabWidget(
+            imagechoom_root=self.imagechoom_root,
+            on_enqueue_workflow=self._enqueue_promptlab_workflow,
+        )
+
+    def _build_runs_page(self) -> QWidget:
+        page = QWidget()
+        page.setObjectName("runsPage")
+
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(24, 24, 24, 24)
+
+        self.runs_queue_list = QListWidget()
+        layout.addWidget(QLabel("Queued Prompt Lab jobs"))
+        layout.addWidget(self.runs_queue_list, 1)
+
+        controls = QHBoxLayout()
+        self.run_next_button = QPushButton("Run Next")
+        self.run_next_button.clicked.connect(self._run_next_queued_job)
+        controls.addWidget(self.run_next_button)
+
+        self.remove_queue_item_button = QPushButton("Remove Selected")
+        self.remove_queue_item_button.clicked.connect(self._remove_selected_queue_item)
+        controls.addWidget(self.remove_queue_item_button)
+        controls.addStretch(1)
+        layout.addLayout(controls)
+
+        self.run_queue_status = QLabel("Queue idle")
+        layout.addWidget(self.run_queue_status)
+        return page
+
     def _handle_sidebar_index_change(self, index: int) -> None:
         if 0 <= index < self.page_stack.count():
             self.page_stack.setCurrentIndex(index)
@@ -335,6 +377,48 @@ class MainWindow(QMainWindow):
         self._run_worker.finished_run.connect(self._on_run_finished)
         self._run_worker.start()
 
+    def _enqueue_promptlab_workflow(self, run_name: str, normalized_text: str) -> None:
+        self._run_queue.append(QueuedRun(run_name=run_name, normalized_text=normalized_text))
+        self.runs_queue_list.addItem(run_name)
+        self.run_queue_status.setText(f"Queued jobs: {len(self._run_queue)}")
+        self.sidebar.setCurrentRow(3)
+
+    def _remove_selected_queue_item(self) -> None:
+        index = self.runs_queue_list.currentRow()
+        if not (0 <= index < len(self._run_queue)):
+            return
+        del self._run_queue[index]
+        self.runs_queue_list.takeItem(index)
+        self.run_queue_status.setText(f"Queued jobs: {len(self._run_queue)}")
+
+    def _run_next_queued_job(self) -> None:
+        if self._run_worker is not None and self._run_worker.isRunning():
+            QMessageBox.warning(self, "Runs", "A run is already in progress.")
+            return
+        if not self._run_queue:
+            QMessageBox.information(self, "Runs", "No queued jobs.")
+            return
+
+        self._save_settings_from_ui()
+        queued = self._run_queue.pop(0)
+        self.runs_queue_list.takeItem(0)
+        self.run_queue_status.setText(f"Running queued job: {queued.run_name}")
+        self.run_logs_text.clear()
+        self._clear_gallery()
+        self.run_status_label.setText("Running...")
+        self.run_button.setEnabled(False)
+        self.sidebar.setCurrentRow(0)
+
+        self._run_worker = RunWorker(
+            normalized_text=queued.normalized_text,
+            run_name=queued.run_name,
+            settings=self.settings,
+        )
+        self._run_worker.log_line.connect(self._append_run_log_line)
+        self._run_worker.finished_run.connect(self._on_run_finished)
+        self._run_worker.finished_run.connect(self._on_queue_run_finished)
+        self._run_worker.start()
+
     def _append_run_log_line(self, line: str) -> None:
         self.run_logs_text.appendPlainText(line)
 
@@ -347,6 +431,12 @@ class MainWindow(QMainWindow):
             self.run_status_label.setText("Failed")
 
         self._populate_gallery(result.image_paths)
+
+    def _on_queue_run_finished(self, _: RunResult) -> None:
+        if self._run_queue:
+            self.run_queue_status.setText(f"Queued jobs remaining: {len(self._run_queue)}")
+        else:
+            self.run_queue_status.setText("Queue idle")
 
     def _clear_gallery(self) -> None:
         while self.gallery_layout.count():
