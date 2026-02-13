@@ -1,0 +1,13 @@
+{
+  "prompt": "dynamic anime key visual, hero pose, city neon lights, clean line art, vibrant color grading, masterpiece",
+  "negative_prompt": "photo, realistic skin texture, blurry, lowres, watermark, text",
+  "width": 832,
+  "height": 1216,
+  "steps": 30,
+  "cfg_scale": 8.5,
+  "sampler_name": "Euler a",
+  "seed": -1,
+  "override_settings": {
+    "sd_model_checkpoint": "anything-v5-PrtRE.safetensors"
+  }
+}

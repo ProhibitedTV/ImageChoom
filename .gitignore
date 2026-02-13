@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Output artifacts
+outputs/
+*.png
+*.jpg
+*.jpeg
+
+# Editor/OS
+.DS_Store
+.vscode/
+.idea/
