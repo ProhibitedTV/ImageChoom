@@ -4,19 +4,53 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QThread, Signal
+from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
+    QCheckBox,
+    QGridLayout,
+    QGroupBox,
+    QHBoxLayout,
     QLabel,
+    QLineEdit,
     QListWidget,
     QMainWindow,
+    QMessageBox,
     QPlainTextEdit,
+    QPushButton,
+    QScrollArea,
+    QSpinBox,
     QSplitter,
     QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
 
+from imagechoom.executor import RunResult, run_workflow
+from imagechoom.settings import AppSettings, check_a1111_health, load_settings, save_settings
 from imagechoom.workflows import discover_workflows, normalize_workflow_for_run, read_workflow_text
+
+
+class RunWorker(QThread):
+    """QThread wrapper for workflow execution."""
+
+    finished_run = Signal(object)
+
+    def __init__(
+        self,
+        *,
+        normalized_text: str,
+        run_name: str,
+        settings: AppSettings,
+    ) -> None:
+        super().__init__()
+        self.normalized_text = normalized_text
+        self.run_name = run_name
+        self.settings = settings
+
+    def run(self) -> None:
+        result = run_workflow(self.normalized_text, self.run_name, self.settings)
+        self.finished_run.emit(result)
 
 
 class MainWindow(QMainWindow):
@@ -27,12 +61,14 @@ class MainWindow(QMainWindow):
     def __init__(self, *, imagechoom_root: Path) -> None:
         super().__init__()
         self.imagechoom_root = imagechoom_root
+        self.settings = load_settings(self.imagechoom_root)
+        self._run_worker: RunWorker | None = None
 
         self._workflow_items = discover_workflows(self.imagechoom_root)
 
         self.setObjectName("mainWindow")
         self.setWindowTitle("ImageChoom")
-        self.resize(980, 640)
+        self.resize(980, 700)
 
         self.sidebar = QListWidget()
         self.sidebar.setObjectName("navigationSidebar")
@@ -91,6 +127,9 @@ class MainWindow(QMainWindow):
         self.workflow_warnings_label.hide()
         detail_layout.addWidget(self.workflow_warnings_label)
 
+        detail_layout.addWidget(self._build_settings_panel())
+        detail_layout.addWidget(self._build_run_panel())
+
         source_label = QLabel("Source (.choom)")
         source_label.setObjectName("workflowSourceLabel")
         detail_layout.addWidget(source_label)
@@ -109,6 +148,25 @@ class MainWindow(QMainWindow):
         self.workflow_normalized_text.setReadOnly(True)
         detail_layout.addWidget(self.workflow_normalized_text, 1)
 
+        run_logs_label = QLabel("Run logs")
+        detail_layout.addWidget(run_logs_label)
+        self.run_logs_text = QPlainTextEdit()
+        self.run_logs_text.setReadOnly(True)
+        self.run_logs_text.setMaximumBlockCount(2000)
+        detail_layout.addWidget(self.run_logs_text, 1)
+
+        gallery_label = QLabel("Generated images")
+        detail_layout.addWidget(gallery_label)
+        self.gallery_scroll = QScrollArea()
+        self.gallery_scroll.setWidgetResizable(True)
+        gallery_widget = QWidget()
+        self.gallery_layout = QGridLayout(gallery_widget)
+        self.gallery_layout.setContentsMargins(8, 8, 8, 8)
+        self.gallery_layout.setHorizontalSpacing(12)
+        self.gallery_layout.setVerticalSpacing(12)
+        self.gallery_scroll.setWidget(gallery_widget)
+        detail_layout.addWidget(self.gallery_scroll, 1)
+
         workflows_splitter.addWidget(self.workflow_list)
         workflows_splitter.addWidget(detail_panel)
         workflows_splitter.setStretchFactor(0, 0)
@@ -121,6 +179,56 @@ class MainWindow(QMainWindow):
             self.workflow_list.setCurrentRow(0)
 
         return page
+
+    def _build_settings_panel(self) -> QWidget:
+        box = QGroupBox("A1111 Settings")
+        layout = QGridLayout(box)
+
+        layout.addWidget(QLabel("URL"), 0, 0)
+        self.a1111_url_input = QLineEdit(self.settings.a1111_url)
+        layout.addWidget(self.a1111_url_input, 0, 1, 1, 2)
+
+        layout.addWidget(QLabel("Timeout (s)"), 1, 0)
+        self.a1111_timeout_input = QSpinBox()
+        self.a1111_timeout_input.setRange(1, 3600)
+        self.a1111_timeout_input.setValue(self.settings.a1111_timeout)
+        layout.addWidget(self.a1111_timeout_input, 1, 1)
+
+        self.cancel_on_timeout_input = QCheckBox("Cancel on timeout")
+        self.cancel_on_timeout_input.setChecked(self.settings.cancel_on_timeout)
+        layout.addWidget(self.cancel_on_timeout_input, 1, 2)
+
+        buttons_row = QHBoxLayout()
+        self.save_settings_button = QPushButton("Save Settings")
+        self.save_settings_button.clicked.connect(self._save_settings_from_ui)
+        buttons_row.addWidget(self.save_settings_button)
+
+        self.health_check_button = QPushButton("Health Check")
+        self.health_check_button.clicked.connect(self._run_health_check)
+        buttons_row.addWidget(self.health_check_button)
+        buttons_row.addStretch(1)
+
+        layout.addLayout(buttons_row, 2, 0, 1, 3)
+
+        self.health_check_status = QLabel("")
+        self.health_check_status.setWordWrap(True)
+        layout.addWidget(self.health_check_status, 3, 0, 1, 3)
+
+        return box
+
+    def _build_run_panel(self) -> QWidget:
+        panel = QWidget()
+        layout = QHBoxLayout(panel)
+        layout.setContentsMargins(0, 0, 0, 0)
+
+        self.run_button = QPushButton("Run")
+        self.run_button.clicked.connect(self._run_selected_workflow)
+        layout.addWidget(self.run_button)
+
+        self.run_status_label = QLabel("Idle")
+        layout.addWidget(self.run_status_label)
+        layout.addStretch(1)
+        return panel
 
     def _build_placeholder_page(self, section_name: str) -> QWidget:
         page = QWidget()
@@ -172,6 +280,100 @@ class MainWindow(QMainWindow):
             else:
                 self.workflow_warnings_label.hide()
         else:
-            self.workflow_preview_title.hide()
-            self.workflow_normalized_text.hide()
+            self.workflow_normalized_text.setPlainText(read_workflow_text(workflow.path))
+            self.workflow_preview_title.show()
+            self.workflow_normalized_text.show()
             self.workflow_warnings_label.hide()
+
+    def _save_settings_from_ui(self) -> None:
+        self.settings = AppSettings(
+            a1111_url=self.a1111_url_input.text().strip() or "http://127.0.0.1:7860",
+            a1111_timeout=int(self.a1111_timeout_input.value()),
+            cancel_on_timeout=self.cancel_on_timeout_input.isChecked(),
+            outputs_root=self.settings.outputs_root,
+        )
+        path = save_settings(self.settings)
+        self.health_check_status.setText(f"Saved: {path}")
+
+    def _run_health_check(self) -> None:
+        self._save_settings_from_ui()
+        ok, detail = check_a1111_health(self.settings.a1111_url, self.settings.a1111_timeout)
+        status = "Success" if ok else "Failed"
+        self.health_check_status.setText(f"{status}: {detail}")
+
+    def _run_selected_workflow(self) -> None:
+        index = self.workflow_list.currentRow()
+        if not (0 <= index < len(self._workflow_items)):
+            QMessageBox.warning(self, "Run", "Select a workflow first.")
+            return
+
+        self._save_settings_from_ui()
+        workflow = self._workflow_items[index]
+        normalized = normalize_workflow_for_run(workflow.path)
+
+        self.run_logs_text.clear()
+        self._clear_gallery()
+        self.run_status_label.setText("Running...")
+        self.run_button.setEnabled(False)
+
+        self._run_worker = RunWorker(
+            normalized_text=normalized.normalized_text,
+            run_name=workflow.name,
+            settings=self.settings,
+        )
+        self._run_worker.finished_run.connect(self._on_run_finished)
+        self._run_worker.start()
+
+    def _on_run_finished(self, result: RunResult) -> None:
+        self.run_button.setEnabled(True)
+        self.run_logs_text.setPlainText("\n".join(result.log_lines))
+        if result.success:
+            self.run_status_label.setText(f"Done ({len(result.image_paths)} images)")
+        else:
+            self.run_status_label.setText("Failed")
+
+        self._populate_gallery(result.image_paths)
+
+    def _clear_gallery(self) -> None:
+        while self.gallery_layout.count():
+            item = self.gallery_layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+
+    def _populate_gallery(self, image_paths: list[Path]) -> None:
+        self._clear_gallery()
+        if not image_paths:
+            self.gallery_layout.addWidget(QLabel("No images yet."), 0, 0)
+            return
+
+        columns = 3
+        for index, image_path in enumerate(image_paths):
+            row = index // columns
+            col = index % columns
+
+            tile = QWidget()
+            tile_layout = QVBoxLayout(tile)
+            tile_layout.setContentsMargins(0, 0, 0, 0)
+
+            thumb = QLabel()
+            thumb.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            pixmap = QPixmap(str(image_path))
+            if not pixmap.isNull():
+                thumb.setPixmap(
+                    pixmap.scaled(
+                        220,
+                        220,
+                        Qt.AspectRatioMode.KeepAspectRatio,
+                        Qt.TransformationMode.SmoothTransformation,
+                    )
+                )
+            else:
+                thumb.setText("(failed to load image)")
+            tile_layout.addWidget(thumb)
+
+            caption = QLabel(image_path.name)
+            caption.setWordWrap(True)
+            tile_layout.addWidget(caption)
+
+            self.gallery_layout.addWidget(tile, row, col)
